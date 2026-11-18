@@ -47,6 +47,9 @@ removed integer not null default 0, created_at timestamptz not null default now(
 await sql.unsafe(`create table if not exists creators (key text primary key, created_at timestamptz not null default now())`);
 await sql.unsafe(`alter table events add column if not exists creator_key text not null default ''`);
 await sql.unsafe(`alter table summaries add column if not exists creator_key text not null default ''`);
+// Event kind: 'social' (night out) or 'network' (networking/conference: work rules, contact swap on a match).
+await sql.unsafe(`alter table events add column if not exists kind text not null default 'social'`);
+await sql.unsafe(`alter table guests add column if not exists contact text not null default ''`);
 
 const newId = (n = 9) => randomBytes(n).toString("base64url");
 const json = (data: unknown, status = 200) =>
@@ -256,10 +259,11 @@ const endsAt = new Date(start + Math.round(hours * 60) * 60_000).toISOString();
 const id = newId(6), hostKey = newId(18), qrSecret = newId(24);
 const meetSpot = str(body.meetSpot, 80);
 const browseAllowed = body.browseAllowed !== false;
+const kind = body.kind === "network" ? "network" : "social";
 const creatorKey = await creatorOrNew(body.creatorKey);
-await sql`insert into events (id, name, lat, lng, radius_m, starts_at, ends_at, statuses, host_key, qr_required, qr_secret, meet_spot, browse_allowed, creator_key)
+await sql`insert into events (id, name, lat, lng, radius_m, starts_at, ends_at, statuses, host_key, qr_required, qr_secret, meet_spot, browse_allowed, creator_key, kind)
 values (${id}, ${name}, ${loc.lat}, ${loc.lng}, ${radius}, ${startsAt}::timestamptz, ${endsAt}::timestamptz,
-${JSON.stringify(statuses)}::jsonb, ${hostKey}, ${!!body.qrRequired}, ${qrSecret}, ${meetSpot}, ${browseAllowed}, ${creatorKey})`;
+${JSON.stringify(statuses)}::jsonb, ${hostKey}, ${!!body.qrRequired}, ${qrSecret}, ${meetSpot}, ${browseAllowed}, ${creatorKey}, ${kind})`;
 return json({ id, hostKey, name, startsAt, endsAt, creatorKey });
 }
 
@@ -362,7 +366,7 @@ from reports r left join guests t on t.id = r.to_id left join guests f on f.id =
 where r.event_id = ${ev.id} order by r.created_at desc limit 50`;
 return json({
 ended: false,
-event: { id: ev.id, name: ev.name, startsAt: ev.starts_at, endsAt: ev.ends_at, radius: ev.radius_m, statuses: ev.statuses, qrRequired: ev.qr_required, meetSpot: ev.meet_spot, browseAllowed: ev.browse_allowed },
+event: { id: ev.id, name: ev.name, startsAt: ev.starts_at, endsAt: ev.ends_at, radius: ev.radius_m, statuses: ev.statuses, qrRequired: ev.qr_required, meetSpot: ev.meet_spot, browseAllowed: ev.browse_allowed, kind: ev.kind },
 stats: { joined: c.joined, here: c.here, browsing: c.browsing, waves: c.waves, matches: Math.floor(c.mutual / 2) },
 reports: reports.map((r: any) => ({ id: r.id, reason: r.reason, at: r.created_at, toId: r.to_id, toAlias: r.to_alias || "(left)", toHidden: !!r.to_hidden, fromAlias: r.from_alias || "(left)" })),
 qr: { svg, joinUrl, shareUrl, rotatesEverySec: ev.qr_required ? QR_WINDOW_MS / 1000 : null },
@@ -380,7 +384,7 @@ return fail(s ? "This event has ended." : "Event not found.", 404, { ended: !!s,
 const action = parts[3];
 
 if (method === "GET" && !action) {
-return json({ name: ev.name, startsAt: ev.starts_at, endsAt: ev.ends_at, statuses: ev.statuses, qrRequired: ev.qr_required, radius: ev.radius_m, browseAllowed: ev.browse_allowed });
+return json({ name: ev.name, startsAt: ev.starts_at, endsAt: ev.ends_at, statuses: ev.statuses, qrRequired: ev.qr_required, radius: ev.radius_m, browseAllowed: ev.browse_allowed, kind: ev.kind });
 }
 
 if (new Date(ev.starts_at) > new Date())
@@ -411,9 +415,9 @@ return fail("This event needs on-site check-in. Scan the QR code displayed at th
 const fence = fenceCheck(ev, body.loc);
 if (fence) return fence;
 const id = newId(8), token = newId(24);
-await sql`insert into guests (id, event_id, token, alias, status, line, find_me, visibility, last_inside)
+await sql`insert into guests (id, event_id, token, alias, status, line, find_me, visibility, contact, last_inside)
 values (${id}, ${ev.id}, ${token}, ${alias}, ${status}, ${str(body.line, 80)}, ${str(body.findMe, 60)},
-${body.visibility === "match" ? "match" : "all"}, now())`;
+${body.visibility === "match" ? "match" : "all"}, ${str(body.contact, 120)}, now())`;
 return json({ token, guestId: id });
 }
 
@@ -471,7 +475,7 @@ const status = str(body.status, 30);
 if (!(ev.statuses as string[]).includes(status)) return fail("Choose one of the event's status options.");
 if (str(body.findMe, 60).length < 3) return fail(FIND_ME_MSG);
 await sql`update guests set mode = 'declared', alias = ${alias}, status = ${status}, line = ${str(body.line, 80)},
-find_me = ${str(body.findMe, 60)}, visibility = ${body.visibility === "match" ? "match" : "all"} where id = ${me.id}`;
+find_me = ${str(body.findMe, 60)}, visibility = ${body.visibility === "match" ? "match" : "all"}, contact = ${str(body.contact, 120)} where id = ${me.id}`;
 return json({ ok: true });
 }
 
@@ -483,7 +487,7 @@ const status = str(body.status, 30);
 if (!(ev.statuses as string[]).includes(status)) return fail("Choose one of the event's status options.");
 if (str(body.findMe, 60).length < 3) return fail(FIND_ME_MSG);
 await sql`update guests set status = ${status}, line = ${str(body.line, 80)}, find_me = ${str(body.findMe, 60)},
-visibility = ${body.visibility === "match" ? "match" : "all"} where id = ${me.id}`;
+visibility = ${body.visibility === "match" ? "match" : "all"}, contact = ${str(body.contact, 120)} where id = ${me.id}`;
 return json({ ok: true });
 }
 
@@ -527,7 +531,7 @@ return json({ ok: true, mutual: !!back });
 }
 
 if (method === "POST" && action === "board") {
-const others = await sql`select id, alias, status, line, find_me, visibility from guests
+const others = await sql`select id, alias, status, line, find_me, visibility, contact from guests
 where event_id = ${ev.id} and not hidden and id <> ${me.id} and mode = 'declared'
 and last_inside > now() - interval '20 minutes'`;
 const [bc] = await sql`select count(*)::int as n from guests where event_id = ${ev.id} and not hidden
@@ -541,7 +545,7 @@ const peopleB = others
 .map((o: any) => ({ id: o.id, alias: o.alias, status: o.status, line: o.line }));
 return json({
 me: { id: me.id, mode: "browse" }, people: peopleB, browsing,
-event: { name: ev.name, endsAt: ev.ends_at, statuses: ev.statuses, meetSpot: ev.meet_spot },
+event: { name: ev.name, endsAt: ev.ends_at, statuses: ev.statuses, meetSpot: ev.meet_spot, kind: ev.kind },
 });
 }
 const blocks = await sql`select from_id, to_id from blocks where from_id = ${me.id} or to_id = ${me.id}`;
@@ -565,14 +569,16 @@ iWaved: iWaved.has(o.id), wavedMe: wavedMe.has(o.id), mutual,
 iShared: mutual && shared(me.id, o.id, "desc"),
 theyShared: mutual && shared(o.id, me.id, "desc"),
 findMe: bothReady ? o.find_me : "",
-matchWord: bothReady ? matchWordFor(ev.id, me.id, o.id) : "",
+matchWord: bothReady && ev.kind !== "network" ? matchWordFor(ev.id, me.id, o.id) : "",
+// Networking: contact details swap only when both have tapped "Swap contacts" (same both-or-neither rule).
+contact: bothReady ? o.contact : "",
 theirBeacon: mutual && shared(o.id, me.id, "beacon", true),
 };
 });
 return json({
-me: { id: me.id, mode: "declared", alias: me.alias, status: me.status, line: me.line, findMe: me.find_me, visibility: me.visibility },
+me: { id: me.id, mode: "declared", alias: me.alias, status: me.status, line: me.line, findMe: me.find_me, visibility: me.visibility, contact: me.contact },
 people, browsing,
-event: { name: ev.name, endsAt: ev.ends_at, statuses: ev.statuses, meetSpot: ev.meet_spot },
+event: { name: ev.name, endsAt: ev.ends_at, statuses: ev.statuses, meetSpot: ev.meet_spot, kind: ev.kind },
 });
 }
 }
@@ -896,7 +902,7 @@ app.innerHTML =
 '<div id="v-map" class="map" hidden></div>'+
 '<p class="note" id="v-status">Use your location if you\\'re there now, or search to set it up from anywhere.</p>'+
 '</div>'+
-'<label for="ev-preset">Type of event<select id="ev-preset"><option value="social">Social or singles night</option><option value="network">Networking or conference</option><option value="custom">Custom statuses</option></select></label>'+
+'<label for="ev-preset">Type of event<select id="ev-preset"><option value="social">Social or singles night</option><option value="network">Networking or conference</option><option value="custom">Custom statuses</option></select><span class="note" id="kind-note"></span></label>'+
 '<label for="ev-statuses">Status options <span class="note">One per line, 2 to 8</span><textarea id="ev-statuses"></textarea></label>'+
 '<label for="ev-meet">Meeting point <span class="note">Optional. Where guests who both wave can meet up.</span><input type="text" id="ev-meet" maxlength="80" placeholder="The Seeker sign by the main bar"></label>'+
 '<div class="row">'+
@@ -919,7 +925,15 @@ app.innerHTML =
 $("#show-host").onclick = function(){ this.hidden = true; $("#create").hidden = false; $("#ev-name").focus(); };
 var preset = $("#ev-preset"), ta = $("#ev-statuses"), status = $("#v-status");
 function fill(){ if (preset.value !== "custom") ta.value = PRESETS[preset.value].join("\\n"); }
-preset.addEventListener("change", fill); fill();
+function applyKind(){
+var net = preset.value === "network";
+$("#ev-hours").value = net ? "8" : "4"; $("#ev-radius").value = net ? "200" : "100"; if (circle) circle.setRadius(radius());
+$("#ev-browse").checked = true;
+$("#ev-meet").placeholder = net ? "Registration desk" : "The Seeker sign by the main bar";
+$("#ev-name").placeholder = net ? "Kent Tech Meetup, Chatham" : "Friday singles night, Chatham";
+$("#kind-note").textContent = net ? "Guests are asked what they do, see professional house rules, and swap contacts when they both wave. Defaults: 8 hours, 200 m." : "";
+}
+preset.addEventListener("change", function(){ fill(); applyKind(); }); fill(); applyKind();
 function radius(){ return Number($("#ev-radius").value); }
 $("#ev-radius").addEventListener("change", function(){ if (circle) circle.setRadius(radius()); });
 $("#ev-start").addEventListener("change", function(){ $("#ev-when-wrap").hidden = this.value !== "later"; });
@@ -984,7 +998,7 @@ startsAt = t.toISOString();
 btn.disabled = true; btn.textContent = "Creating…";
 api("/api/events", {body:{
 name: $("#ev-name").value, loc: {lat:venue.lat, lng:venue.lng, acc:10, source:"map"}, radius: radius(), hours: Number($("#ev-hours").value),
-statuses: ta.value.split("\\n"), qrRequired: $("#ev-qr").checked, startsAt: startsAt, meetSpot: $("#ev-meet").value, browseAllowed: $("#ev-browse").checked,
+statuses: ta.value.split("\\n"), qrRequired: $("#ev-qr").checked, startsAt: startsAt, meetSpot: $("#ev-meet").value, browseAllowed: $("#ev-browse").checked, kind: preset.value === "network" ? "network" : "social",
 creatorKey: store("seeker:creator") || "", hostCode: $("#ev-code").value.trim()
 }}).then(function(d){
 if (d.error) { if (d.reason === "host_code") codeErr(d.error); else show(d.error); btn.disabled = false; btn.textContent = "Create event"; return; }
@@ -1162,8 +1176,9 @@ var p = app.querySelector(".lock .muted"); if (p) p.textContent = "Starts "+fmtW
 }
 
 function journey(mode){
-var a = {alias:"", status:ev.statuses[0], line:"", findMe:"", vis:"all"};
-var steps = (mode==="join" ? ["intro","rules"] : []).concat(["alias","status","line","findMe","vis","go"]), i = 0;
+var NET = ev.kind === "network";
+var a = {alias:"", status:ev.statuses[0], line:"", findMe:"", contact:"", vis:"all"};
+var steps = (mode==="join" ? ["intro","rules"] : []).concat(NET ? ["alias","status","line","findMe","contact","vis","go"] : ["alias","status","line","findMe","vis","go"]), i = 0;
 var Q = {
 alias:["What should the room call you?","A first name or a nickname. A little mystery is allowed."],
 status:["What’s your status in the room?","Only people inside the venue can see it. You can change it any time."],
@@ -1172,20 +1187,29 @@ findMe:["How will your match spot you?","What you’re wearing or where you’ll
 vis:["Who can see you?","You can change this later."],
 go:["Ready to go live?","This is how you’ll appear. We check you’re inside the venue first. Your location is never stored."]
 };
+if (NET) {
+Q.alias = ["What should people call you?","Your first name is perfect."];
+Q.status = ["What are you here for?","Only people at the event can see it. You can change it any time."];
+Q.line = ["What do you do?","Optional. Your role and company, or what you’re working on."];
+Q.findMe = ["How will people spot you?","What you’re wearing or where you’ll be. Only shown once you’ve both agreed to swap contacts."];
+Q.contact = ["What contact do you want to swap?","Optional. LinkedIn link or work email. Only shown to someone when you’ve both waved and both tapped Swap contacts."];
+}
 function draw(err){
 var k = steps[i], body = "", n = steps.length;
 if (k==="intro") body = '<h2 class="q">Here’s how the room works</h2>'+how()+TRUST;
 else if (k==="rules") body =
 (ev.qrRequired && !store("seeker:c:"+id) ? '<p class="small muted">This event needs on-site check-in. Scan the QR code the host is displaying.</p>' : '')+
 '<h2 class="q">Before you step in</h2><ol class="small rules">'+
-'<li><b>No means no.</b> An unmatch or a block is final. Leave that person alone.</li><li><b>No photos</b> of other guests or their screens.</li>'+
+(NET ? '<li><b>Keep it professional.</b> If someone unmatches or blocks you, that’s final. Leave it there.</li><li><b>No hard selling.</b> Swap contacts and follow up later.</li><li><b>Ask before photos</b> of other guests, their badges or their screens.</li>'
+: '<li><b>No means no.</b> An unmatch or a block is final. Leave that person alone.</li><li><b>No photos</b> of other guests or their screens.</li>')+
 '<li><b>Staff can remove you</b> from the app and from the venue.</li><li><b>18+ only.</b></li></ol>'+
 '<label class="check" for="j-ok"><input type="checkbox" id="j-ok"><span>I’m 18 or over and I agree to the house rules</span></label>';
 else {
 body = '<h2 class="q">'+Q[k][0]+'</h2>';
 if (k==="alias") body += '<input type="text" id="j-in" maxlength="24" placeholder="First name or nickname" value="'+esc(a.alias)+'">';
-if (k==="line") body += '<input type="text" id="j-in" maxlength="80" placeholder="Ask me about my dog" value="'+esc(a.line)+'">';
-if (k==="findMe") body += '<input type="text" id="j-in" maxlength="60" placeholder="Green jacket, near the bar" value="'+esc(a.findMe)+'">';
+if (k==="line") body += '<input type="text" id="j-in" maxlength="80" placeholder="'+(NET?"Product designer at Acme":"Ask me about my dog")+'" value="'+esc(a.line)+'">';
+if (k==="findMe") body += '<input type="text" id="j-in" maxlength="60" placeholder="'+(NET?"Blue lanyard, by the coffee":"Green jacket, near the bar")+'" value="'+esc(a.findMe)+'">';
+if (k==="contact") body += '<input type="text" id="j-in" maxlength="120" placeholder="linkedin.com/in/yourname or you@work.com" value="'+esc(a.contact)+'">';
 if (k==="status") body += '<div class="chips big">'+ev.statuses.map(function(s){return '<button type="button" class="chip" aria-pressed="'+(s===a.status)+'" data-s="'+esc(s)+'">'+esc(s)+'</button>';}).join("")+'</div>';
 if (k==="vis") body += '<div class="chips big"><button type="button" class="chip" aria-pressed="'+(a.vis==="all")+'" data-v="all">Everyone in the room</button><button type="button" class="chip" aria-pressed="'+(a.vis==="match")+'" data-v="match">Only people with my status</button></div>';
 if (k==="go") body += '<div class="preview"><span class="name">'+esc(a.alias)+'</span>'+pill(ev.statuses,a.status)+(a.line?'<span class="line">'+esc(a.line)+'</span>':'')+(a.vis==="match"?'<span class="note">Discreet mode on</span>':'')+'</div>';
@@ -1197,11 +1221,11 @@ app.innerHTML =
 '<div class="prog" aria-hidden="true"><i style="width:'+Math.round((i+1)/n*100)+'%"></i></div>'+
 '<form class="card step" id="jf" novalidate>'+body+
 '<p class="err" id="j-err"'+(err?'':' hidden')+'>'+(err?esc(err):'')+'</p>'+
-'<button type="submit" id="j-next">'+(k==="intro"?"Sounds good":k==="rules"?"Let’s go":k==="go"?"Check my location and join":k==="line"&&!a.line?"Skip":"Next")+'</button>'+
+'<button type="submit" id="j-next">'+(k==="intro"?"Sounds good":k==="rules"?"Let’s go":k==="go"?"Check my location and join":(k==="line"&&!a.line)||(k==="contact"&&!a.contact)?"Skip":"Next")+'</button>'+
 (k==="rules" && ev.browseAllowed ? '<button type="button" class="ghost" id="j-look">Just look around first</button><p class="note">Look around and nobody sees you. You can’t wave until you post a status.</p>' : '')+
 (i>0 || mode==="declare" ? '<button type="button" class="linkbtn" id="j-back">'+(i>0?"Back":"Keep looking")+'</button>' : '')+
 '</form>';
-var inp = $("#j-in"); if (inp) { inp.focus(); inp.oninput=function(){ $("#j-err").hidden=true; if (k==="line") $("#j-next").textContent = inp.value.trim() ? "Next" : "Skip"; }; }
+var inp = $("#j-in"); if (inp) { inp.focus(); inp.oninput=function(){ $("#j-err").hidden=true; if (k==="line"||k==="contact") $("#j-next").textContent = inp.value.trim() ? "Next" : "Skip"; }; }
 app.querySelectorAll("[data-s]").forEach(function(c){ c.onclick=function(){ a.status=c.getAttribute("data-s"); i++; draw(); }; });
 app.querySelectorAll("[data-v]").forEach(function(c){ c.onclick=function(){ a.vis=c.getAttribute("data-v"); i++; draw(); }; });
 var bk = $("#j-back"); if (bk) bk.onclick=function(){ if (i>0) { i--; draw(); } else { editing=false; refresh(); } };
@@ -1221,7 +1245,7 @@ if (k==="alias" && !a.alias) return draw("Pick a name people will see.");
 if (k==="findMe" && a.findMe.length < 3) return draw("Add how people can find you, like what you’re wearing or where you’re standing.");
 if (k!=="go") { i++; return draw(); }
 var btn=$("#j-next"); btn.disabled=true; btn.textContent="Checking your location…";
-var body = {alias:a.alias,status:a.status,line:a.line,findMe:a.findMe,visibility:a.vis};
+var body = {alias:a.alias,status:a.status,line:a.line,findMe:a.findMe,contact:a.contact,visibility:a.vis};
 (mode==="join" ? locate() : freshLoc()).then(function(loc){ if (loc.error) throw loc;
 body.loc = loc;
 if (mode==="join") { body.adult=true; body.rules=true; body.code=store("seeker:c:"+id); }
@@ -1303,11 +1327,11 @@ if (editing) bindEdit(d);
 $("#leave").onclick=leave;
 app.querySelectorAll("[data-wave]").forEach(function(b){ b.onclick=function(){ b.disabled=true;
 freshLoc().then(function(loc){ return api("/api/events/"+id+"/wave",{token:store(tokenKey),body:{to:b.getAttribute("data-wave"),loc:loc}}); })
-.then(function(r){ if(r.error){ flash=""; alert2(r.error); } else if(r.mutual) flash="You both waved. Tap I’m ready to meet whenever you are."; refresh(); }); }; });
+.then(function(r){ if(r.error){ flash=""; alert2(r.error); } else if(r.mutual) flash = ev.kind==="network" ? "You both waved. Tap Swap contacts whenever you’re ready." : "You both waved. Tap I’m ready to meet whenever you are."; refresh(); }); }; });
 app.querySelectorAll("[data-beacon]").forEach(function(b){ b.onclick=function(){ var pid=b.getAttribute("data-beacon"); var p=d.people.filter(function(x){return x.id===pid;})[0]; if (p) beacon(p, id, store(tokenKey), refresh); }; });
 app.querySelectorAll("[data-share]").forEach(function(b){ b.onclick=function(){ b.disabled=true;
 freshLoc().then(function(loc){ return api("/api/events/"+id+"/share",{token:store(tokenKey),body:{to:b.getAttribute("data-share"),loc:loc}}); })
-.then(function(r){ if(r.error){ alert2(r.error); return; } flash = r.both ? "You’re both ready. Check your word, then go and say hi." : "You’re ready. You’ll both see how to find each other once they’re ready too."; refresh(); }); }; });
+.then(function(r){ if(r.error){ alert2(r.error); return; } flash = ev.kind==="network" ? (r.both ? "Contacts swapped. Go and say hi." : "Offer sent. You’ll both see each other’s contact once they tap Swap contacts too.") : (r.both ? "You’re both ready. Check your word, then go and say hi." : "You’re ready. You’ll both see how to find each other once they’re ready too."); refresh(); }); }; });
 app.querySelectorAll("[data-unmatch]").forEach(function(b){ b.onclick=function(){ var pid=b.getAttribute("data-unmatch");
 if (confirmUnmatch!==pid) { confirmUnmatch=pid; renderBoard(d); return; }
 b.disabled=true; confirmUnmatch=null;
@@ -1346,17 +1370,25 @@ api("/api/events/"+id+"/block",{token:store(tokenKey),body:{to:b.getAttribute("d
 app.querySelectorAll("[data-report]").forEach(function(b){ b.onclick=function(){ b.disabled=true; var pid=b.getAttribute("data-report"), r=document.getElementById("r-"+pid);
 api("/api/events/"+id+"/report",{token:store(tokenKey),body:{to:pid,reason:r?r.value:""}}).then(function(){ openMenu=null; flash="Reported to the host and blocked."; refresh(); }); }; });
 }
+function contactHtml(c){
+var s = esc(c);
+if (/^https?:\\/\\//i.test(c)) return '<a href="'+s+'" target="_blank" rel="noopener noreferrer">'+s+'</a>';
+if (/^(www\\.)?linkedin\\.com\\//i.test(c)) return '<a href="https://'+s+'" target="_blank" rel="noopener noreferrer">'+s+'</a>';
+if (/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(c)) return '<a href="mailto:'+s+'">'+s+'</a>';
+return s;
+}
 function matchCard(p, meetSpot){
-var a = esc(p.alias), body;
+var a = esc(p.alias), body, NET = ev.kind === "network";
 if (p.findMe) {
 body = (meetSpot ? '<p class="meet">You’re both ready. Meet at <b>'+esc(meetSpot)+'</b>.</p>' : '<p class="meet">You’re both ready to meet.</p>')+
 '<div class="mrow"><span>Look for: <b>'+esc(p.findMe)+'</b></span></div>'+
+(NET ? '<div class="mrow"><span>Contact: <b>'+(p.contact ? contactHtml(p.contact) : 'none added, say hi in person')+'</b></span></div>' : '')+
 (p.matchWord ? '<div class="mrow"><span>Your word: <b class="word">'+esc(p.matchWord)+'</b></span><span class="small">Say it when you meet. Only you and '+a+' know it.</span></div>' : '');
 } else if (p.iShared) {
-body = '<p class="meet">You both waved.</p><div class="mrow"><span class="small">You’re ready. Waiting for '+a+'. Nothing is revealed until they’re ready too, and if they never tap, nobody is told.</span></div>';
+body = '<p class="meet">You both waved.</p><div class="mrow"><span class="small">'+(NET?'You offered to swap.':'You’re ready.')+' Waiting for '+a+'. Nothing is revealed until they’re ready too, and if they never tap, nobody is told.</span></div>';
 } else {
-body = '<p class="meet">You both waved.</p><div class="mrow"><button type="button" class="quiet sm" data-share="'+esc(p.id)+'">I’m ready to meet</button><span class="small">'+
-(p.theyShared ? a+' is ready when you are.' : 'No rush. When you’re both ready, you’ll see how to find each other and a word only you two know.')+'</span></div>';
+body = '<p class="meet">You both waved.</p><div class="mrow"><button type="button" class="quiet sm" data-share="'+esc(p.id)+'">'+(NET?'Swap contacts':'I’m ready to meet')+'</button><span class="small">'+
+(p.theyShared ? a+' is ready when you are.' : (NET ? 'When you both tap Swap contacts, you’ll see each other’s contact and how to find each other.' : 'No rush. When you’re both ready, you’ll see how to find each other and a word only you two know.'))+'</span></div>';
 }
 return '<div class="match">'+body+
 '<div class="mrow"><button type="button" class="sm" data-beacon="'+esc(p.id)+'">Find each other</button>'+
@@ -1370,6 +1402,7 @@ return '<form class="card" id="edit-form" novalidate><h3>Edit your status</h3><d
 st.map(function(s){return '<button type="button" class="chip" aria-pressed="'+(s===me.status)+'" data-s="'+esc(s)+'">'+esc(s)+'</button>';}).join("")+'</div>'+
 '<label for="e-line">A line about you<input type="text" id="e-line" maxlength="80" value="'+esc(me.line)+'"></label>'+
 '<label for="e-find">How to find you<input type="text" id="e-find" maxlength="60" value="'+esc(me.findMe)+'"></label>'+
+(ev.kind==="network" ? '<label for="e-contact">Contact to swap <span class="note">LinkedIn or work email. Optional.</span><input type="text" id="e-contact" maxlength="120" value="'+esc(me.contact||"")+'"></label>' : '')+
 '<label class="check" for="e-discreet"><input type="checkbox" id="e-discreet"'+(me.visibility==="match"?" checked":"")+'><span>Discreet mode</span></label>'+
 '<p class="err" id="edit-err" hidden></p><div class="row"><button type="submit">Save</button><button type="button" class="ghost" id="e-cancel">Cancel</button></div></form>';
 }
@@ -1379,7 +1412,7 @@ app.querySelectorAll("#e-status .chip").forEach(function(c){ c.onclick=function(
 $("#e-cancel").onclick=function(){ editing=false; renderBoard(d); };
 $("#edit-form").addEventListener("submit", function(e){ e.preventDefault();
 if ($("#e-find").value.trim().length < 3) { var er0=$("#edit-err"); er0.textContent="Add how people can find you, like what you’re wearing or where you’re standing."; er0.hidden=false; return; }
-freshLoc().then(function(loc){ return api("/api/events/"+id+"/me",{token:store(tokenKey),body:{status:picked,line:$("#e-line").value,findMe:$("#e-find").value,visibility:$("#e-discreet").checked?"match":"all",loc:loc}}); })
+freshLoc().then(function(loc){ return api("/api/events/"+id+"/me",{token:store(tokenKey),body:{status:picked,line:$("#e-line").value,findMe:$("#e-find").value,contact:($("#e-contact")?$("#e-contact").value:""),visibility:$("#e-discreet").checked?"match":"all",loc:loc}}); })
 .then(function(r){ if(r.error){ var er=$("#edit-err"); er.textContent=r.error; er.hidden=false; return; } editing=false; flash="Saved."; refresh(); });
 });
 }
