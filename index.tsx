@@ -885,7 +885,7 @@ app.innerHTML =
 '<button type="button" class="ghost" id="show-host">Host a Seeker room</button>'+
 '<form class="card" id="create" novalidate hidden>'+
 '<h2>Host an event</h2>'+
-'<label for="ev-code">Host code <span class="note">Hosting is invite-only for now. No code? DM Seeker on Instagram.</span><input type="text" id="ev-code" maxlength="40" autocapitalize="characters" autocomplete="off" value="'+esc(store("seeker:hostcode")||"")+'"></label>'+
+'<label for="ev-code">Host code <span class="note">Hosting is invite-only for now. No code? DM Seeker on Instagram.</span><input type="text" id="ev-code" maxlength="40" autocapitalize="characters" autocomplete="off" value="'+esc(store("seeker:hostcode")||"")+'"><p class="err" id="code-err" hidden></p></label>'+
 '<label for="ev-name">Event name<input type="text" id="ev-name" maxlength="60" placeholder="Friday singles night, Chatham" required></label>'+
 '<div class="field"><p class="flabel">Venue</p>'+
 '<div class="seg" role="group" aria-label="How to set the venue">'+
@@ -970,7 +970,9 @@ e.preventDefault();
 var btn = $("#create-btn"), err = $("#create-err");
 err.hidden = true;
 function show(msg){ err.textContent = msg; err.hidden = false; }
-if (!$("#ev-code").value.trim()) return show("Enter your host code. No code? DM Seeker on Instagram.");
+var cerr = $("#code-err"); cerr.hidden = true;
+function codeErr(msg){ cerr.textContent = msg; cerr.hidden = false; var f = $("#ev-code"); f.scrollIntoView({behavior:"smooth", block:"center"}); f.focus({preventScroll:true}); show(msg+" The host code box is at the top of this form."); }
+if (!$("#ev-code").value.trim()) return codeErr("Enter your host code. No code? DM Seeker on Instagram.");
 if (!$("#ev-name").value.trim()) return show("Give the event a name.");
 if (!venue) return show("Set the venue first: use your location or search for the address.");
 var startsAt = null;
@@ -985,7 +987,7 @@ name: $("#ev-name").value, loc: {lat:venue.lat, lng:venue.lng, acc:10, source:"m
 statuses: ta.value.split("\\n"), qrRequired: $("#ev-qr").checked, startsAt: startsAt, meetSpot: $("#ev-meet").value, browseAllowed: $("#ev-browse").checked,
 creatorKey: store("seeker:creator") || "", hostCode: $("#ev-code").value.trim()
 }}).then(function(d){
-if (d.error) { show(d.error); btn.disabled = false; btn.textContent = "Create event"; return; }
+if (d.error) { if (d.reason === "host_code") codeErr(d.error); else show(d.error); btn.disabled = false; btn.textContent = "Create event"; return; }
 store("seeker:hostcode", $("#ev-code").value.trim());
 if (d.creatorKey) store("seeker:creator", d.creatorKey);
 addHost({id:d.id, k:d.hostKey, name:d.name});
