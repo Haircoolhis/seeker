@@ -1,0 +1,7 @@
+{
+  "name": "seeker",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "bun index.tsx" },
+  "dependencies": { "qrcode": "^1.5.4" }
+}
