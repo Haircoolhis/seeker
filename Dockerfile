@@ -1,6 +1,6 @@
-FROM oven/bun:1.2
+FROM oven/bun:1
 WORKDIR /app
-COPY package.json bun.lock ./
+COPY package.json ./
 RUN bun install --production
 COPY index.tsx ./
 ENV NODE_ENV=production
