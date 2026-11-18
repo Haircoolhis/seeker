@@ -624,6 +624,15 @@ Bun.serve({
 });
 console.log("Seeker listening on " + PORT);
 
+// Keep-awake: Render's free instances sleep after 15 min with no inbound traffic.
+// Pinging our own public URL every 10 min counts as traffic, so guests never hit a cold start.
+const SELF_URL = Bun.env.RENDER_EXTERNAL_URL;
+if (SELF_URL) {
+  setInterval(() => {
+    fetch(SELF_URL + "/health").catch((e) => console.error("keep-awake", e));
+  }, 10 * 60_000);
+}
+
 // ---------- web app ----------
 const PAGE = `<!doctype html>
 <html lang="en">
