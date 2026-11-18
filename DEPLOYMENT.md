@@ -63,5 +63,10 @@ History
 - 2026-10-18: step-by-step location help (incl. Instagram/TikTok in-app browsers).
 - 2026-10-18: creator links; "Copy guest link"; removed the host-link import box; build step for the 96 KB limit. 100 automated checks passing (e2e, e2e2, e2e3, e2e5, e2e6, e2e7, e2e8; e2e4 is the retired pre-handshake beacon suite), run against the built file.
 - 2026-10-18: guest join rebuilt as a one-question-per-screen journey with notes, progress bar and a preview before going live. 100 checks still passing. Host create form is still a single form.
+- 2026-10-24: trust badges on the first screen (no sign-up / payment / phone number / deleted at night end), link-preview text, favicon, "Made in Kent" footer; address renamed to seekerlive.up.railway.app.
+
+- 2026-10-25: hosting is invite-only. Variable HOST_CODES (comma-separated, case-insensitive; currently VELVET26) is checked when an event is created. Remove the variable to open hosting to everyone. Home page shows a 12.5 s story-style explainer reel.
+- 2026-10/11: "night" wording changed to "room"; @useseeker under the host QR, in the footer and on the ended page.
+- 2026-11-18: moved from Railway (trial ended) to Render (app) + Neon (database). Keep-awake ping added. 14-check end-to-end test passed locally before the move; live start on Render connected to Neon ("Seeker listening on 10000").
 
 Not built yet: card payments / pricing tiers, email sign-in, QR posters / table cards / receipt artwork, permanent venue link (e.g. /v/2geda) so printed codes survive from week to week, "pause new joins" button, clearer label for the QR check-in option, icebreaker games, journey-style host create form.
