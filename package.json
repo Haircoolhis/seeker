@@ -2,6 +2,15 @@
   "name": "seeker",
   "private": true,
   "type": "module",
-  "scripts": { "start": "bun index.tsx" },
-  "dependencies": { "qrcode": "^1.5.4" }
+  "scripts": {
+    "build": "bun build index.tsx --target=bun --outdir=dist",
+    "start": "bun index.tsx"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@neon/config": "^1.14.3",
+    "@neon/env": "^2.1.6"
+  }
 }
